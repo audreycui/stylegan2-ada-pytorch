@@ -13,6 +13,8 @@ import PIL.Image
 import json
 import torch
 import dnnlib
+import pandas as pd
+import torchvision.transforms as transforms
 
 try:
     import pyspng
@@ -47,6 +49,7 @@ class Dataset(torch.utils.data.Dataset):
         if xflip:
             self._raw_idx = np.tile(self._raw_idx, 2)
             self._xflip = np.concatenate([self._xflip, np.ones_like(self._xflip)])
+           
 
     def _get_raw_labels(self):
         if self._raw_labels is None:
@@ -159,7 +162,10 @@ class ImageFolderDataset(Dataset):
     ):
         self._path = path
         self._zipfile = None
-
+        
+        # load bounding boxes for birds
+        self.bbox = self.load_bbox()
+        
         if os.path.isdir(self._path):
             self._type = 'dir'
             self._all_fnames = {os.path.relpath(os.path.join(root, fname), start=self._path) for root, _dirs, files in os.walk(self._path) for fname in files}
@@ -210,10 +216,28 @@ class ImageFolderDataset(Dataset):
     def _load_raw_image(self, raw_idx):
         fname = self._image_fnames[raw_idx]
         with self._open_file(fname) as f:
+            name_ind=fname[:fname.rfind("/")].rfind("/") 
+            jpg_ind=fname.find(".jpg")
+            bbox = self.bbox[fname[name_ind+1:jpg_ind]]
             if pyspng is not None and self._file_ext(fname) == '.png':
                 image = pyspng.load(f.read())
             else:
-                image = np.array(PIL.Image.open(f))
+                #make all images the same resolution
+                #image = np.array(PIL.Image.open(f))
+                image = PIL.Image.open(f).convert('RGB')
+                width, height = image.size
+                if bbox is not None:
+                    r = int(np.maximum(bbox[2], bbox[3]) * 0.75)
+                    center_x = int((2 * bbox[0] + bbox[2]) / 2)
+                    center_y = int((2 * bbox[1] + bbox[3]) / 2)
+                    y1 = np.maximum(0, center_y - r)
+                    y2 = np.minimum(height, center_y + r)
+                    x1 = np.maximum(0, center_x - r)
+                    x2 = np.minimum(width, center_x + r)
+                    image = image.crop([x1, y1, x2, y2])
+                    image = image.resize((64,64), PIL.Image.BILINEAR)
+                    image = np.array(image)
+                
         if image.ndim == 2:
             image = image[:, :, np.newaxis] # HW => HWC
         image = image.transpose(2, 0, 1) # HWC => CHW
@@ -232,5 +256,29 @@ class ImageFolderDataset(Dataset):
         labels = np.array(labels)
         labels = labels.astype({1: np.int64, 2: np.float32}[labels.ndim])
         return labels
+    
+    #bbox loading and image processing from https://github.com/MinfengZhu/DM-GAN
+    def load_bbox(self):
+        data_dir = 'training/datasets/'
+        bbox_path = os.path.join(data_dir, 'CUB_200_2011/bounding_boxes.txt')
+        df_bounding_boxes = pd.read_csv(bbox_path,
+                                        delim_whitespace=True,
+                                        header=None).astype(int)
+        #
+        filepath = os.path.join(data_dir, 'CUB_200_2011/images.txt')
+        df_filenames = \
+            pd.read_csv(filepath, delim_whitespace=True, header=None)
+        filenames = df_filenames[1].tolist()
+        print('Total filenames: ', len(filenames), filenames[0])
+        #
+        filename_bbox = {img_file[:-4]: [] for img_file in filenames}
+        numImgs = len(filenames)
+        for i in range(0, numImgs):
+            # bbox = [x-left, y-top, width, height]
+            bbox = df_bounding_boxes.iloc[i][1:].tolist()
 
+            key = filenames[i][:-4]
+            filename_bbox[key] = bbox
+        #
+        return filename_bbox
 #----------------------------------------------------------------------------

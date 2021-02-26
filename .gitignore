@@ -1,2 +1,5 @@
 __pycache__/
 .cache/
+training/datasets/CUB_200_2011
+training/results/bird_stylegan
+
