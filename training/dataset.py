@@ -235,6 +235,8 @@ class ImageFolderDataset(Dataset):
                     x1 = np.maximum(0, center_x - r)
                     x2 = np.minimum(width, center_x + r)
                     image = image.crop([x1, y1, x2, y2])
+                    
+                    #resolution
                     image = image.resize((64,64), PIL.Image.BILINEAR)
                     image = np.array(image)
                 
